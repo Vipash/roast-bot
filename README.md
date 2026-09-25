@@ -88,18 +88,8 @@ code Code
 ├── package.json
 └── tailwind.config.ts
 
+---
+
 🛡️ License
 
 MIT License. Free to use and modify for learning and showcase purposes.
-code Code
-
----
-
-### Part 3: Push to GitHub & Auto-Deploy
-
-In your terminal, commit and push your new code:
-
-```bash
-git add app/page.tsx README.md
-git commit -m "feat: add zero-friction GitHub ingestion, Twitter share, and updated README"
-git push

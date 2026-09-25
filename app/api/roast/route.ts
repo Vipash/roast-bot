@@ -1,21 +1,59 @@
 import { NextResponse } from 'next/server';
-import OpenAI from 'openai';
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-  // baseURL: process.env.OPENAI_BASE_URL || undefined, // uncomment if using Groq
-});
 
 export async function POST(req: Request) {
   try {
+    const apiKey = process.env.OPENAI_API_KEY?.trim();
+
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: 'API key is missing in your .env.local file.' },
+        { status: 500 }
+      );
+    }
+
     const { text, type } = await req.json();
 
     if (!text || text.trim().length < 20) {
       return NextResponse.json(
-        { error: 'Please give us more content to work with (at least 20 chars).' },
+        { error: 'Please provide at least 20 characters to roast.' },
         { status: 400 }
       );
     }
+
+    // 1. Ask Groq which models YOUR account is permitted to use
+    const modelsRes = await fetch('https://api.groq.com/openai/v1/models', {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    const modelsData = await modelsRes.json();
+    const availableModelIds: string[] = modelsData.data?.map((m: any) => m.id) || [];
+
+    // Print to your terminal so you can see all models your key can use
+    console.log('✅ Models available on your Groq key:', availableModelIds);
+
+    // 2. Prioritize the best conversational models available on your account
+    const preferredModels = [
+      'openai/gpt-oss-120b',
+      'openai/gpt-oss-20b',
+      'llama-3.3-70b-versatile',
+      'llama-3.1-8b-instant',
+      'qwen/qwen3.8-27b',
+      'deepseek-r1-distill-llama-70b',
+      'gemma2-9b-it',
+    ];
+
+    // Pick the highest priority model or fall back to any active text model
+    const selectedModel =
+      preferredModels.find((m) => availableModelIds.includes(m)) ||
+      availableModelIds.find(
+        (m) => !m.includes('whisper') && !m.includes('guard') && !m.includes('tts')
+      ) ||
+      availableModelIds[0];
+
+    if (!selectedModel) {
+      throw new Error('No active chat models found for your Groq API key.');
+    }
+
+    console.log(`🚀 Using model: ${selectedModel}`);
 
     const systemPrompt = `
 You are a sharp, brutally honest, internet-culture-fluent tech critic and career realist.
@@ -26,9 +64,9 @@ Roast buzzwords like "passionate visionary", "synergized", "AI enthusiast", over
 You MUST respond strictly in valid JSON with this exact schema:
 {
   "punchline": "A single brutal, punchy one-sentence summary of their profile",
-  "corporateSpeakRating": 85, // number from 0 to 100
-  "ghostingRisk": 90, // number from 0 to 100
-  "cringeFactor": "Terminal / High / Mild / Low",
+  "corporateSpeakRating": 85,
+  "ghostingRisk": 90,
+  "cringeFactor": "Terminal",
   "bulletRoasts": [
     "Specific roast point 1 targeting their buzzwords or vague claims",
     "Specific roast point 2 targeting their formatting, title inflation, or generic tech stack",
@@ -36,24 +74,43 @@ You MUST respond strictly in valid JSON with this exact schema:
   ],
   "actualAdvice": "One single sentence of genuine, high-value tactical advice so this is actually useful."
 }
-Only return the raw JSON object, no markdown quotes (\`\`\`json).`;
+Only return the raw JSON object, no markdown quotes.`;
 
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini', // or 'llama-3.3-70b-versatile' on Groq
-      temperature: 0.9,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: `Analyze and roast this ${type}:\n\n${text}` },
-      ],
+    // 3. Request completion from Groq using the selected model
+    const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: selectedModel,
+        temperature: 0.8,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: `Analyze and roast this ${type}:\n\n${text}` },
+        ],
+      }),
     });
 
-    const roastData = JSON.parse(response.choices[0].message.content || '{}');
+    const data = await groqRes.json();
+
+    if (!groqRes.ok) {
+      console.error('Groq Error:', data);
+      throw new Error(data.error?.message || `Groq failed with status ${groqRes.status}`);
+    }
+
+    let rawContent = data.choices[0]?.message?.content || '{}';
+    // Clean any markdown formatting if present
+    rawContent = rawContent.replace(/```json/g, '').replace(/```/g, '').trim();
+    const roastData = JSON.parse(rawContent);
+
     return NextResponse.json(roastData);
   } catch (error: any) {
     console.error('Roast error:', error);
     return NextResponse.json(
-      { error: error?.message || 'The AI choked on that cringe. Try again.' },
+      { error: error?.message || 'The AI choked on that. Please try again.' },
       { status: 500 }
     );
   }

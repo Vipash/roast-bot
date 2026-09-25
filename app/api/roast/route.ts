@@ -6,31 +6,39 @@ export async function POST(req: Request) {
 
     if (!apiKey) {
       return NextResponse.json(
-        { error: 'API key is missing in your .env.local file.' },
+        { error: "The AI critic was fired because someone forgot to set the API key in environment settings." },
         { status: 500 }
       );
     }
 
     const { text, type } = await req.json();
 
-    if (!text || text.trim().length < 20) {
+    // Edge case: Empty or too short
+    if (!text || text.trim().length < 15) {
       return NextResponse.json(
-        { error: 'Please provide at least 20 characters to roast.' },
+        { error: "We can't critique a ghost profile. Give us at least a sentence with some substance to roast." },
         { status: 400 }
       );
     }
 
-    // 1. Ask Groq which models YOUR account is permitted to use
+    // Edge case: Excessive payload (truncate to avoid model token overruns)
+    const sanitizedText = text.trim().slice(0, 6000);
+
+    // 1. Fetch available models from Groq
     const modelsRes = await fetch('https://api.groq.com/openai/v1/models', {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
+    
+    if (!modelsRes.ok) {
+      return NextResponse.json(
+        { error: "Groq is taking a breather from burning egos. Please retry in 10 seconds." },
+        { status: 503 }
+      );
+    }
+
     const modelsData = await modelsRes.json();
     const availableModelIds: string[] = modelsData.data?.map((m: any) => m.id) || [];
 
-    // Print to your terminal so you can see all models your key can use
-    console.log('✅ Models available on your Groq key:', availableModelIds);
-
-    // 2. Prioritize the best conversational models available on your account
     const preferredModels = [
       'openai/gpt-oss-120b',
       'openai/gpt-oss-20b',
@@ -41,23 +49,14 @@ export async function POST(req: Request) {
       'gemma2-9b-it',
     ];
 
-    // Pick the highest priority model or fall back to any active text model
     const selectedModel =
       preferredModels.find((m) => availableModelIds.includes(m)) ||
-      availableModelIds.find(
-        (m) => !m.includes('whisper') && !m.includes('guard') && !m.includes('tts')
-      ) ||
+      availableModelIds.find((m) => !m.includes('whisper') && !m.includes('guard')) ||
       availableModelIds[0];
-
-    if (!selectedModel) {
-      throw new Error('No active chat models found for your Groq API key.');
-    }
-
-    console.log(`🚀 Using model: ${selectedModel}`);
 
     const systemPrompt = `
 You are a sharp, brutally honest, internet-culture-fluent tech critic and career realist.
-You specialize in dissecting ${type}s (resumes, LinkedIn headlines/bios, or GitHub READMEs).
+You specialize in dissecting ${type}s (resumes, LinkedIn headlines/bios, or GitHub profiles).
 Tone: Witty, savage, self-aware, and dead-accurate. Think tech Twitter / Blind / Reddit meets Gordon Ramsay.
 Roast buzzwords like "passionate visionary", "synergized", "AI enthusiast", over-engineered hobby projects, and inflated metrics.
 
@@ -76,7 +75,6 @@ You MUST respond strictly in valid JSON with this exact schema:
 }
 Only return the raw JSON object, no markdown quotes.`;
 
-    // 3. Request completion from Groq using the selected model
     const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -85,32 +83,35 @@ Only return the raw JSON object, no markdown quotes.`;
       },
       body: JSON.stringify({
         model: selectedModel,
-        temperature: 0.8,
+        temperature: 0.85,
         response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: `Analyze and roast this ${type}:\n\n${text}` },
+          { role: 'user', content: `Analyze and roast this ${type}:\n\n${sanitizedText}` },
         ],
       }),
     });
 
-    const data = await groqRes.json();
+    if (groqRes.status === 429) {
+      return NextResponse.json(
+        { error: "Too much cringe at once! The rate limiter tripped. Give it 15 seconds." },
+        { status: 429 }
+      );
+    }
 
+    const data = await groqRes.json();
     if (!groqRes.ok) {
-      console.error('Groq Error:', data);
-      throw new Error(data.error?.message || `Groq failed with status ${groqRes.status}`);
+      throw new Error(data.error?.message || 'Inference error');
     }
 
     let rawContent = data.choices[0]?.message?.content || '{}';
-    // Clean any markdown formatting if present
     rawContent = rawContent.replace(/```json/g, '').replace(/```/g, '').trim();
     const roastData = JSON.parse(rawContent);
 
     return NextResponse.json(roastData);
   } catch (error: any) {
-    console.error('Roast error:', error);
     return NextResponse.json(
-      { error: error?.message || 'The AI choked on that. Please try again.' },
+      { error: "The AI choked trying to parse this. Either your profile broke our model or the server timed out. Try again!" },
       { status: 500 }
     );
   }

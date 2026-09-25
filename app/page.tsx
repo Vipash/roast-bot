@@ -27,43 +27,52 @@ export default function Home() {
 
   // 1. Fetch public profile and top repos directly from GitHub API
   const handleFetchGithub = async () => {
-    if (!githubUser.trim()) return;
+    if (!githubUser.trim()) {
+      setError("Enter a GitHub username first — we can't read your mind yet.");
+      return;
+    }
     setFetchingGithub(true);
     setError(null);
 
     try {
-      const userRes = await fetch(`https://api.github.com/users/${githubUser.trim()}`);
+      const cleanUser = githubUser.trim().replace(/^@/, '');
+      const userRes = await fetch(`https://api.github.com/users/${cleanUser}`);
+      
       if (!userRes.ok) {
-        if (userRes.status === 404) throw new Error(`GitHub user "${githubUser}" not found.`);
-        throw new Error('Failed to fetch from GitHub API.');
+        if (userRes.status === 404) {
+          throw new Error(`GitHub user "@${cleanUser}" does not exist. Did you typo it or delete your account in shame?`);
+        }
+        if (userRes.status === 403) {
+          throw new Error("GitHub's public API rate-limited us. Paste your README manually into the box below!");
+        }
+        throw new Error('Could not connect to GitHub API right now.');
       }
       const userData = await userRes.json();
 
-      // Fetch recent 5 repositories
       const reposRes = await fetch(
-        `https://api.github.com/users/${githubUser.trim()}/repos?sort=pushed&per_page=5`
+        `https://api.github.com/users/${cleanUser}/repos?sort=pushed&per_page=5`
       );
       const reposData = await reposRes.json();
 
-      const repoSummaries = Array.isArray(reposData)
+      const repoSummaries = Array.isArray(reposData) && reposData.length > 0
         ? reposData
             .map(
               (r: any) =>
                 `- ${r.name} (${r.language || 'No language'}): "${r.description || 'No description'}" [⭐ ${r.stargazers_count}]`
             )
             .join('\n')
-        : 'No public repositories found.';
+        : 'Zero public repositories. Either completely stealth or nothing to show.';
 
       const compiledProfile = `
-GitHub Handle: @${userData.login}
-Name: ${userData.name || 'Anonymous'}
-Bio: ${userData.bio || 'No bio provided.'}
-Company: ${userData.company || 'None'}
-Location: ${userData.location || 'Unknown'}
-Followers: ${userData.followers} | Following: ${userData.following} | Public Repos: ${userData.public_repos}
+    GitHub Handle: @${userData.login}
+    Name: ${userData.name || 'Anonymous'}
+    Bio: ${userData.bio || 'No bio provided.'}
+    Company: ${userData.company || 'Unemployed / Founder'}
+    Location: ${userData.location || 'The Metaverse'}
+    Followers: ${userData.followers} | Following: ${userData.following} | Public Repos: ${userData.public_repos}
 
-Recent Repositories:
-${repoSummaries}
+    Recent Repositories:
+    ${repoSummaries}
       `.trim();
 
       setInputText(compiledProfile);

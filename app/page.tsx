@@ -4,6 +4,7 @@ import React, { useState, useRef } from 'react';
 import { toPng } from 'html-to-image';
 import confetti from 'canvas-confetti';
 import { Flame, Download, RefreshCw, AlertTriangle, CheckCircle2, Share2 } from 'lucide-react';
+import { track } from '@vercel/analytics';
 
 interface RoastResult {
   punchline: string;
@@ -99,6 +100,7 @@ export default function Home() {
       if (!res.ok) throw new Error(data.error || 'Failed to generate roast');
 
       setResult(data);
+      track('roast_completed', { surface: profileType });
       confetti({ particleCount: 65, spread: 75, origin: { y: 0.6 } });
     } catch (err: any) {
       setError(err.message);
@@ -108,6 +110,7 @@ export default function Home() {
   };
 
   const handleDownload = async () => {
+    track('card_downloaded', { surface: profileType });
     if (!cardRef.current) return;
     try {
       const dataUrl = await toPng(cardRef.current, { cacheBust: true, pixelRatio: 2 });
